@@ -267,7 +267,69 @@ def calculate_distribution_moments(distribution, distribution_type, min_bound=-0
     }
 
     return result
+def debug_raw_data(volatility_data):
+    all_dates = list(volatility_data.keys())
 
+    # Sort dates properly (MM/DD/YYYY format)
+    def date_sort_key(date_str):
+        try:
+            return pd.to_datetime(date_str, format='%m/%d/%Y')
+        except:
+            return pd.to_datetime('1/1/1900', format='%m/%d/%Y')  # fallback for bad dates
+
+    all_dates.sort(key=date_sort_key)
+
+    print(f"Raw data spans from {all_dates[0]} to {all_dates[-1]}")
+    print(f"Total dates in raw data: {len(all_dates)}")
+
+    # Check January-February dates for ANY year
+    jan_feb_dates = []
+    for d in all_dates:
+        try:
+            parsed_date = pd.to_datetime(d, format='%m/%d/%Y')
+            if parsed_date.month in [1, 2]:  # January or February
+                jan_feb_dates.append(d)
+        except:
+            continue
+
+    print(f"January-February dates: {len(jan_feb_dates)}")
+
+    if jan_feb_dates:
+        print("First 10 Jan-Feb dates:")
+        for date in jan_feb_dates[:10]:
+            print(f"  {date}: ", end="")
+            for exp in volatility_data[date]:
+                days = int(volatility_data[date][exp]['time_to_expiration'] * 365)
+                print(f"{days}d ", end="")
+            print()
+
+    # Debug the target expiration filtering
+    print(f"\nChecking for 6-10 day expirations in Jan-Feb:")
+    target_days = [6, 7, 8, 9, 10]
+    valid_jan_feb = []
+
+    for date in jan_feb_dates:
+        for exp in volatility_data[date]:
+            days = int(volatility_data[date][exp]['time_to_expiration'] * 365)
+            if days in target_days:
+                valid_jan_feb.append((date, days))
+                break
+
+    print(f"Jan-Feb dates with 6-10 day options: {len(valid_jan_feb)}")
+    if valid_jan_feb:
+        print("First 10 valid Jan-Feb dates:")
+        for date, days in valid_jan_feb[:10]:
+            print(f"  {date}: {days}d expiration")
+
+    # Check what get_valid_trading_days would return
+    print(f"\nTesting get_valid_trading_days function:")
+    valid_days = get_valid_trading_days(volatility_data, target_days, 0)
+    valid_jan_feb_from_function = [d for d in valid_days if pd.to_datetime(d, format='%m/%d/%Y').month in [1, 2]]
+    print(f"get_valid_trading_days returns {len(valid_jan_feb_from_function)} Jan-Feb dates")
+
+    if len(valid_jan_feb) != len(valid_jan_feb_from_function):
+        print(f"ERROR: Raw data has {len(valid_jan_feb)} valid Jan-Feb dates, but function returns {len(valid_jan_feb_from_function)}")
+        print("This is likely the source of your March 3rd filtering bug!")
 def fit_smoother_historical_distribution(returns, min_bound=-0.5, max_bound=0.5):
     """
     Fit a smoother distribution to historical returns that prioritizes
@@ -801,6 +863,7 @@ def calculate_realized_higher_moments_amaya_wrapper():
 
     # Process each selected ticker
     for ticker, csv_file, expiry_info in tickers_to_process:
+        print(ticker, expiry_info)
         print(f"\nProcessing {ticker} ({expiry_info})...")
 
         # Determine time series directory
@@ -3236,8 +3299,11 @@ def get_valid_trading_days(ticker_data, target_expiry_days=[6, 7, 8, 9, 10], all
     valid_days = []
 
     for day in ticker_data:
+        print(day)
         for expiration in ticker_data[day]:
+            print(f"{expiration}")
             days_to_expiry = int(ticker_data[day][expiration]['time_to_expiration'] * 365)
+            print(days_to_expiry)
 
             # Check if this EXACTLY matches any of our target days (no tolerance)
             if days_to_expiry in target_expiry_days:
@@ -3746,6 +3812,10 @@ def main():
             with open(filepath, "r") as file:
                 volatility_data = json.load(file)  # Load dictionary from JSON file
                 all_volatility_data[ticker] = volatility_data  # Save for future reference
+            # ADD THIS DEBUG CALL:
+            print(f"\n=== DEBUGGING RAW DATA FOR {ticker} ===")
+            debug_raw_data(volatility_data)
+            print(f"=== END DEBUG FOR {ticker} ===\n")
 
             # Step 1: Load minute data for the selected ticker
             print("\nLoading minute data for analysis...")
