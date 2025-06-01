@@ -3598,328 +3598,302 @@ def check_expiration_specific_progress(valid_tickers):
     else:
         return None, None, False, False, []
 
-def main():
-    # Record start time
-    start_time = datetime.now()
-    print(f"Analysis started at {start_time}")
+import logging
 
-    # Update timestamp and username for tracking
-    global TIMESTAMP, USERNAME
-    TIMESTAMP = "2025-05-27 00:46:59"  # UTC time - updated timestamp
-    USERNAME = "testtesttest703"
+def setup_logging():
+    """Set up comprehensive logging for the analysis process"""
+    log_dir = '/content/drive/MyDrive/qvc_analysis_logs'
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Create log filename with timestamp
+    log_filename = f"{log_dir}/qvc_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    
+    # Set up logging configuration
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_filename),
+            logging.StreamHandler()  # Also log to console
+        ]
+    )
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"=== QVC Analysis Session Started ===")
+    logger.info(f"User: {USERNAME}")
+    logger.info(f"Timestamp: {TIMESTAMP}")
+    logger.info(f"Log file: {log_filename}")
+    
+    return logger
 
-    # Ask user for preferences
-    print("\nAnalysis Options:")
-    print("1. Process a single ticker")
-    print("2. Process tickers in order of least progress first")
-    print("3. Process specific expiration lengths (6, 7, 8, 9, 10 days)")
-    print("4. Readjust time series data")
-    print("5. Calculate Amaya moments (realized skewness & kurtosis)")  # New option
-    print("6. Clear results and exit")
-
-    choice = input("Enter your choice (1-6): ")
-
-    if choice == "6":
-        clear_choice = input("Clear results for all tickers? (y/n): ")
-        if clear_choice.lower() == 'y':
-            clear_results()
+def get_process_state():
+    """
+    Check the current state of processing for all tickers and return detailed status
+    
+    Returns:
+    dict: Comprehensive state information for all tickers
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("=== Checking Process State ===")
+    
+    state = {
+        'overall_status': 'checking',
+        'tickers': {},
+        'next_actions': [],
+        'completion_summary': {}
+    }
+    
+    target_days = [6, 7, 8, 9, 10]
+    
+    for ticker in valid_tickers:
+        logger.info(f"Checking state for {ticker}...")
+        
+        ticker_state = {
+            'data_file_exists': False,
+            'minute_data_available': False,
+            'expiration_processing': {},
+            'time_series_plots': {},
+            'completion_percentage': 0,
+            'current_step': 'not_started',
+            'issues': [],
+            'next_action': None
+        }
+        
+        # Check if data file exists
+        data_file = f'/content/drive/MyDrive/{ticker}analyzed4.2_optimized_data.json'
+        if os.path.exists(data_file):
+            ticker_state['data_file_exists'] = True
+            logger.info(f"  ✓ Data file exists for {ticker}")
         else:
-            ticker_to_clear = input(f"Enter ticker to clear {valid_tickers}: ").upper()
-            if ticker_to_clear in valid_tickers:
-                clear_results(ticker_to_clear)
-            else:
-                print("Invalid ticker.")
-        return
-
-    if choice == "4":  # Readjustment option
-        readjust_time_series_data()
-        return
-
-    if choice == "5":  # New Amaya moments option
-        calculate_realized_higher_moments_amaya_wrapper()
-        return
-
-    # Dictionary to hold volatility data for different tickers
-    all_volatility_data = {}
-
-    # Determine tickers to process
-    if choice == "2":
-        # Process tickers in order of least progress first
-        print("\nScanning progress for all tickers...")
-        tickers_to_process = find_progress_for_all_tickers(valid_tickers, all_volatility_data)
-        print(f"\nWill process tickers in this order: {', '.join(tickers_to_process)}")
-
-    elif choice == "3":
-        # Process specific expiration lengths
-        print("\nProcessing specific expiration lengths (6, 7, 8, 9, 10 days)...")
-
-        # Check progress for all tickers
-        ticker_to_process, resume_day, needs_processing, needs_plots, completed_days = check_expiration_specific_progress(valid_tickers)
-
-        if ticker_to_process is None:
-            print("All tickers are fully processed. Nothing to do.")
-            return
-
-        print(f"\nWill process {ticker_to_process} next:")
-        if needs_processing:
-            print(f"- Resume processing trading days from {resume_day if resume_day else 'the beginning'}")
-        if needs_plots:
-            print(f"- Generate time series plots for completed expiration days")
-
-        # Process only the selected ticker
-        tickers_to_process = [ticker_to_process]
-        process_expirations = True
-
-        # Load Treasury rates data
-        treasury_rates = load_treasury_rates()
-
-        # Process the ticker
-        print(f"\nProcessing {ticker_to_process}...")
-
-        # Create results directory
-        results_dir = f'/content/drive/MyDrive/{ticker_to_process}_analysis_results'
-        os.makedirs(results_dir, exist_ok=True)
-        print(f"Results will be saved to: {results_dir}")
-
-        # Construct filepath using selected ticker
-        filepath = f'/content/drive/MyDrive/{ticker_to_process}analyzed4.2_optimized_data.json'
-
-        print(f"Loading data from: {filepath}")
-        if os.path.exists(filepath):
-            print(f"File size: {os.path.getsize(filepath)} bytes")
-
-            with open(filepath, "r") as file:
-                volatility_data = json.load(file)
-                all_volatility_data[ticker_to_process] = volatility_data
-
-            # Load minute data for the selected ticker
-            print("\nLoading minute data for analysis...")
-            try:
-                minute_data = load_minute_data(ticker_to_process)
-                if len(minute_data) == 0:
-                    print(f"Error: No minute data available for {ticker_to_process}. Skipping analysis.")
-                    ticker_processing_status = {}  # Define this since it's used later
-                    ticker_processing_status[ticker_to_process] = "Failed - No minute data"
-                    return
-
-                print(f"Successfully loaded {len(minute_data)} minute records")
-            except Exception as e:
-                print(f"Error loading minute data for {ticker_to_process}: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                return
-
-            # Create special directory for expiration-specific analysis
-            expiration_dir = f"{results_dir}/expiration_specific"
-            os.makedirs(expiration_dir, exist_ok=True)
-
-            if needs_processing:
-                # Process expiration-specific days (EXACT matches only)
-                print("\nProcessing data for specific expiration lengths (6, 7, 8, 9, 10 days)...")
-                target_days_to_process = [day for day in [6, 7, 8, 9, 10] if day not in completed_days]
-
-                expiration_results = process_specific_expirations(
-                    volatility_data,
-                    ticker_to_process,
-                    minute_data,
-                    treasury_rates,
-                    target_days=target_days_to_process,
-                    save_dir=expiration_dir,
-                    resume_from_day=resume_day
-                )
-
-            if needs_plots:
-                # Generate time series plots for all completed expiration lengths
-                print("\nGenerating time series plots for completed expiration lengths...")
-
-                for day_length in [6, 7, 8, 9, 10]:
-                    csv_file = f"{expiration_dir}/{ticker_to_process}_{day_length}day_options_summary.csv"
-                    if os.path.exists(csv_file):
-                        try:
-                            print(f"Creating time series plots for {day_length}-day options...")
-                            # Load the CSV data
-                            df = pd.read_csv(csv_file)
-
-                            # Create time series directory
-                            time_series_dir = f"{expiration_dir}/{day_length}day_time_series"
-                            os.makedirs(time_series_dir, exist_ok=True)
-
-                            # Create time series plots
-                            plot_skewness_kurtosis_time_series(
-                                df.to_dict('records'),
-                                f"{ticker_to_process} ({day_length}-day)",
-                                save_dir=time_series_dir
-                            )
-
-                            # Add plots comparing original vs Amaya moments if applicable
-                            if 'original_realized_skewness' in df.columns:
-                                plot_amaya_comparison(
-                                    df.to_dict('records'),
-                                    ticker_to_process,
-                                    day_length,
-                                    save_dir=time_series_dir
-                                )
-
-                            print(f"Successfully created time series plots for {day_length}-day options")
-                        except Exception as e:
-                            print(f"Error creating time series plots for {day_length}-day options: {e}")
-                            import traceback
-                            traceback.print_exc()
-
-            print(f"\nCompleted processing for {ticker_to_process}")
-            ticker_processing_status = {}  # Define this since it's used later
-            ticker_processing_status[ticker_to_process] = "Completed - Expiration analysis"
+            ticker_state['issues'].append('Data file missing')
+            logger.warning(f"  ✗ Data file missing for {ticker}")
+        
+        # Check minute data availability
+        minute_file = f"/content/drive/MyDrive/{ticker}_minute_data.csv"
+        if os.path.exists(minute_file):
+            ticker_state['minute_data_available'] = True
+            logger.info(f"  ✓ Minute data available for {ticker}")
         else:
-            print(f"Error: Data file not found for {ticker_to_process}")
-            ticker_processing_status = {}  # Define this since it's used later
-            ticker_processing_status[ticker_to_process] = "Failed - No data file"
-    else:
-        # Get ticker selection for standard processing
-        print("Please select one of the following tickers:")
-        for ticker in valid_tickers:
-            print(f"- {ticker}")
-
-        selected_ticker = input("Enter ticker: ").upper().strip()
-        while selected_ticker not in valid_tickers:
-            print("Invalid ticker selected. Please choose from: NVDA, GOOG, MSFT, AAPL, TSLA")
-            selected_ticker = input("Enter ticker: ").upper().strip()
-
-        tickers_to_process = [selected_ticker]
-        process_expirations = False
-
-    # Load Treasury rates data
-    treasury_rates = load_treasury_rates()
-
-    # Process each ticker
-    ticker_processing_status = {ticker: "Pending" for ticker in tickers_to_process}
-
-    # Start processing tickers in order
-    for ticker in tickers_to_process:
-        print(f"\nProcessing {ticker}...")
-
-        # Create results directory
-        results_dir = f'/content/drive/MyDrive/{ticker}_analysis_results'
-        os.makedirs(results_dir, exist_ok=True)
-        print(f"Results will be saved to: {results_dir}")
-
-        # Construct filepath using selected ticker
-        filepath = f'/content/drive/MyDrive/{ticker}analyzed4.2_optimized_data.json'
-
-        print(f"Loading data from: {filepath}")
-        if os.path.exists(filepath):
-            print(f"File size: {os.path.getsize(filepath)} bytes")
-
-            with open(filepath, "r") as file:
-                volatility_data = json.load(file)  # Load dictionary from JSON file
-                all_volatility_data[ticker] = volatility_data  # Save for future reference
-            # ADD THIS DEBUG CALL:
-            print(f"\n=== DEBUGGING RAW DATA FOR {ticker} ===")
-            debug_raw_data(volatility_data)
-            print(f"=== END DEBUG FOR {ticker} ===\n")
-
-            # Step 1: Load minute data for the selected ticker
-            print("\nLoading minute data for analysis...")
-            try:
-                minute_data = load_minute_data(ticker)
-                if len(minute_data) == 0:
-                    print(f"Error: No minute data available for {ticker}. Skipping analysis.")
-                    ticker_processing_status[ticker] = "Failed - No minute data"
-                    continue
-
-                print(f"Successfully loaded {len(minute_data)} minute records")
-                has_minute_data = True
-            except Exception as e:
-                print(f"Error loading minute data for {ticker}: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                minute_data = None
-                has_minute_data = False
-                print(f"Warning: Cannot proceed with {ticker} without minute data")
-                ticker_processing_status[ticker] = "Failed - Minute data error"
-                continue
-
-            # If processing specific expiration lengths
-            if choice == "3" and process_expirations:
-                # Create special directory for expiration-specific analysis
-                expiration_dir = f"{results_dir}/expiration_specific"
-                os.makedirs(expiration_dir, exist_ok=True)
-
-                # Process expiration-specific days (EXACT matches only)
-                print("\nProcessing data for specific expiration lengths (6, 7, 8, 9, 10 days)...")
-                expiration_results = process_specific_expirations(
-                    volatility_data,
-                    ticker,
-                    minute_data,
-                    treasury_rates,
-                    target_days=[6, 7, 8, 9, 10],  # Updated target days
-                    save_dir=expiration_dir
-                )
-
-                print(f"\nCompleted expiration-specific analysis for {ticker}")
-                ticker_processing_status[ticker] = "Completed - Expiration analysis"
-                continue
-
-            # Step 2: Find valid trading days with options (EXACT matches only)
-            target_expiry_days = [6, 7, 8, 9, 10]  # Updated target days
-            allowed_range = 0  # MUST be exactly these days - no tolerance
-
-            valid_trading_days = get_valid_trading_days(
-                volatility_data, target_expiry_days, allowed_range)
-
-            print(f"\nFound {len(valid_trading_days)} trading days with options expiring in EXACTLY 6, 7, 8, 9, or 10 days")
-
-            # Sort trading days chronologically
-            valid_trading_days.sort()
-
-            # Find the last processed day for this ticker
-            last_processed_day = find_last_processed_trading_day(ticker, valid_trading_days)
-
-            if last_processed_day:
-                # Find the index of the last processed day
+            ticker_state['issues'].append('Minute data missing')
+            logger.warning(f"  ✗ Minute data missing for {ticker}")
+        
+        # Check expiration-specific processing
+        exp_dir = f'/content/drive/MyDrive/{ticker}_analysis_results/expiration_specific'
+        completed_days = 0
+        
+        for day_length in target_days:
+            day_state = {
+                'csv_exists': False,
+                'csv_record_count': 0,
+                'time_series_plots_exist': False,
+                'last_trading_day': None,
+                'status': 'not_started'
+            }
+            
+            # Check CSV file
+            csv_file = f"{exp_dir}/{ticker}_{day_length}day_options_summary.csv"
+            if os.path.exists(csv_file):
+                day_state['csv_exists'] = True
                 try:
-                    last_idx = valid_trading_days.index(last_processed_day)
-                    # Start from the next day
-                    days_to_process = valid_trading_days[last_idx + 1:]
-
-                    print(f"\nResuming from after {last_processed_day}. {len(days_to_process)} trading days remaining.")
-
-                    if not days_to_process:
-                        print(f"\n✅ All trading days already processed for {ticker}. Moving to next ticker.")
-                        ticker_processing_status[ticker] = "Completed - All days already processed"
-                        continue
-                except ValueError:
-                    # If day not found in list (shouldn't happen), process all
-                    days_to_process = valid_trading_days
-                    print(f"\nLast processed day {last_processed_day} not found in valid days. Processing all days.")
-            else:
-                # Process all days if no previous processing
-                days_to_process = valid_trading_days
-                print(f"\nNo previous processing found for {ticker}. Processing all {len(days_to_process)} trading days.")
-
-            # Step 3: Process trading days with historical distribution fitting and realized moments
-            moments_data = []
-
-            # Load existing moments data if available
-            moments_csv = f"{results_dir}/{ticker}_moments_summary.csv"
-            if os.path.exists(moments_csv):
-                try:
-                    existing_moments_df = pd.read_csv(moments_csv)
-                    # Convert to list of dictionaries
-                    for _, row in existing_moments_df.iterrows():
-                        moments_data.append(row.to_dict())
-                    print(f"Loaded {len(moments_data)} existing moments from {moments_csv}")
+                    df = pd.read_csv(csv_file)
+                    day_state['csv_record_count'] = len(df)
+                    if len(df) > 0:
+                        day_state['last_trading_day'] = df['trading_day'].iloc[-1]
+                        day_state['status'] = 'processing_complete'
+                        completed_days += 1
+                        logger.info(f"    ✓ {day_length}-day: {len(df)} records, last day: {day_state['last_trading_day']}")
                 except Exception as e:
-                    print(f"Error loading existing moments data: {e}")
+                    day_state['status'] = 'csv_corrupted'
+                    ticker_state['issues'].append(f'{day_length}-day CSV corrupted: {str(e)}')
+                    logger.error(f"    ✗ {day_length}-day CSV corrupted: {str(e)}")
+            else:
+                logger.info(f"    - {day_length}-day: Not started")
+            
+            # Check time series plots
+            plots_dir = f"{exp_dir}/{day_length}day_time_series"
+            if os.path.exists(plots_dir):
+                plot_files = [f for f in os.listdir(plots_dir) if f.endswith('.png')]
+                if len(plot_files) >= 3:  # Expect at least 3 plot files
+                    day_state['time_series_plots_exist'] = True
+                    logger.info(f"      ✓ Time series plots exist ({len(plot_files)} files)")
+                else:
+                    logger.info(f"      - Incomplete time series plots ({len(plot_files)} files)")
+            
+            ticker_state['expiration_processing'][day_length] = day_state
+        
+        # Calculate completion percentage
+        ticker_state['completion_percentage'] = (completed_days / len(target_days)) * 100
+        
+        # Determine current step and next action
+        if not ticker_state['data_file_exists']:
+            ticker_state['current_step'] = 'data_missing'
+            ticker_state['next_action'] = 'skip_no_data'
+        elif not ticker_state['minute_data_available']:
+            ticker_state['current_step'] = 'minute_data_missing'
+            ticker_state['next_action'] = 'skip_no_minute_data'
+        elif completed_days == 0:
+            ticker_state['current_step'] = 'ready_to_start'
+            ticker_state['next_action'] = 'start_processing'
+        elif completed_days < len(target_days):
+            ticker_state['current_step'] = 'partial_processing'
+            ticker_state['next_action'] = 'continue_processing'
+        else:
+            # Check if time series plots need generation
+            plots_needed = False
+            for day_length in target_days:
+                if not ticker_state['expiration_processing'][day_length]['time_series_plots_exist']:
+                    plots_needed = True
+                    break
+            
+            if plots_needed:
+                ticker_state['current_step'] = 'plots_needed'
+                ticker_state['next_action'] = 'generate_plots'
+            else:
+                ticker_state['current_step'] = 'complete'
+                ticker_state['next_action'] = 'none'
+        
+        state['tickers'][ticker] = ticker_state
+        
+        # Log summary for this ticker
+        logger.info(f"  Status: {ticker_state['current_step']} ({ticker_state['completion_percentage']:.1f}% complete)")
+        if ticker_state['issues']:
+            logger.warning(f"  Issues: {', '.join(ticker_state['issues'])}")
+    
+    # Determine overall status and next actions
+    processable_tickers = [t for t in valid_tickers 
+                          if state['tickers'][t]['data_file_exists'] and 
+                             state['tickers'][t]['minute_data_available']]
+    
+    if not processable_tickers:
+        state['overall_status'] = 'no_processable_tickers'
+        logger.error("No tickers have both data file and minute data available")
+    else:
+        # Find tickers that need processing
+        need_processing = [t for t in processable_tickers 
+                          if state['tickers'][t]['next_action'] in ['start_processing', 'continue_processing']]
+        need_plots = [t for t in processable_tickers 
+                     if state['tickers'][t]['next_action'] == 'generate_plots']
+        
+        if need_processing:
+            state['overall_status'] = 'processing_needed'
+            state['next_actions'] = need_processing
+        elif need_plots:
+            state['overall_status'] = 'plots_needed'
+            state['next_actions'] = need_plots
+        else:
+            state['overall_status'] = 'all_complete'
+            state['next_actions'] = []
+    
+    # Create completion summary
+    for ticker in valid_tickers:
+        ticker_info = state['tickers'][ticker]
+        state['completion_summary'][ticker] = {
+            'status': ticker_info['current_step'],
+            'completion_pct': ticker_info['completion_percentage'],
+            'issues': len(ticker_info['issues'])
+        }
+    
+    logger.info(f"=== Process State Check Complete ===")
+    logger.info(f"Overall Status: {state['overall_status']}")
+    logger.info(f"Next Actions: {state['next_actions']}")
+    
+    return state
 
-            # Create historical fits directory
-            hist_plots_dir = f"{results_dir}/historical_fits"
-            os.makedirs(hist_plots_dir, exist_ok=True)
-
-            print(f"\nProcessing {len(days_to_process)} trading days with comprehensive analysis...")
-            processed_count = 0
-            for i, trading_day in enumerate(tqdm(days_to_process, desc=f"Analyzing {ticker}")):
+def process_ticker_comprehensive(ticker, state, treasury_rates, logger):
+    """
+    Process a single ticker comprehensively with detailed logging
+    
+    Parameters:
+    ticker (str): Ticker symbol to process
+    state (dict): Current process state
+    treasury_rates: Treasury rates data
+    logger: Logger instance
+    
+    Returns:
+    dict: Processing results
+    """
+    logger.info(f"=== Starting Comprehensive Processing for {ticker} ===")
+    
+    results = {
+        'ticker': ticker,
+        'success': False,
+        'steps_completed': [],
+        'steps_failed': [],
+        'trading_days_processed': 0,
+        'trading_days_failed': 0,
+        'detailed_log': []
+    }
+    
+    try:
+        # Step 1: Load data files
+        logger.info(f"Step 1: Loading data files for {ticker}")
+        
+        # Load volatility data
+        data_file = f'/content/drive/MyDrive/{ticker}analyzed4.2_optimized_data.json'
+        logger.info(f"Loading volatility data from: {data_file}")
+        with open(data_file, "r") as file:
+            volatility_data = json.load(file)
+        logger.info(f"✓ Loaded volatility data: {len(volatility_data)} trading days")
+        results['steps_completed'].append('load_volatility_data')
+        
+        # Load minute data
+        minute_data = load_minute_data(ticker)
+        if len(minute_data) == 0:
+            raise Exception("No minute data available")
+        logger.info(f"✓ Loaded minute data: {len(minute_data)} records")
+        results['steps_completed'].append('load_minute_data')
+        
+        # Step 2: Set up directories
+        logger.info(f"Step 2: Setting up directories for {ticker}")
+        results_dir = f'/content/drive/MyDrive/{ticker}_analysis_results'
+        expiration_dir = f"{results_dir}/expiration_specific"
+        os.makedirs(expiration_dir, exist_ok=True)
+        logger.info(f"✓ Results directory: {results_dir}")
+        results['steps_completed'].append('setup_directories')
+        
+        # Step 3: Process each expiration length
+        target_days = [6, 7, 8, 9, 10]
+        
+        for day_length in target_days:
+            logger.info(f"Step 3.{day_length}: Processing {day_length}-day expirations for {ticker}")
+            
+            # Check if already completed
+            csv_file = f"{expiration_dir}/{ticker}_{day_length}day_options_summary.csv"
+            if os.path.exists(csv_file):
                 try:
-                    # Compare RND to realized minute-based moments with comprehensive method
+                    existing_df = pd.read_csv(csv_file)
+                    if len(existing_df) > 0:
+                        logger.info(f"  ✓ {day_length}-day already processed ({len(existing_df)} records)")
+                        results['steps_completed'].append(f'process_{day_length}_day')
+                        continue
+                except Exception as e:
+                    logger.warning(f"  Existing CSV corrupted, reprocessing: {str(e)}")
+            
+            # Get trading days for this expiration length
+            expiration_days = get_specific_expiration_days(volatility_data, [day_length], tolerance=0)
+            trading_days_list = expiration_days.get(day_length, [])
+            
+            if not trading_days_list:
+                logger.warning(f"  No trading days found for exactly {day_length}-day expirations")
+                results['steps_failed'].append(f'no_data_{day_length}_day')
+                continue
+            
+            logger.info(f"  Found {len(trading_days_list)} trading days for {day_length}-day expirations")
+            
+            # Process each trading day with detailed logging
+            day_moments = []
+            processed_count = 0
+            failed_count = 0
+            
+            for i, trading_day_tuple in enumerate(trading_days_list):
+                trading_day, expiration_date, exact_days = trading_day_tuple
+                
+                try:
+                    # Log every 20th trading day for progress tracking
+                    if i % 20 == 0:
+                        logger.info(f"    Processing trading day {i+1}/{len(trading_days_list)}: {trading_day} (expires in {exact_days} days)")
+                    
+                    # Calculate comprehensive moments
                     result = compare_rnd_to_realized_comprehensive(
                         volatility_data,
                         trading_day,
@@ -3928,84 +3902,303 @@ def main():
                         treasury_rates=treasury_rates,
                         x_range_limits=(-0.5, 0.5),
                         include_overnight=True,
-                        show_plot=False,  # Don't show plots to speed up processing
-                        save_results=True  # Save results to file
+                        show_plot=False,
+                        save_results=False  # Don't save individual results to speed up
                     )
-
-                    # Store moments data if available
+                    
                     if result is not None:
                         _, _, stats_dict = result
-                        moments_data.append(stats_dict)
+                        
+                        # Add Amaya scaling
+                        trading_day_dt = pd.to_datetime(trading_day, format='%m/%d/%Y')
+                        expiration_day_dt = pd.to_datetime(expiration_date, format='%m/%d/%Y')
+                        
+                        amaya_moments = calculate_realized_higher_moments_amaya(
+                            minute_data, trading_day_dt, expiration_day_dt, stats_dict
+                        )
+                        
+                        if amaya_moments:
+                            stats_dict['original_realized_skewness'] = stats_dict.get('realized_skewness', 0)
+                            stats_dict['original_realized_kurtosis'] = stats_dict.get('realized_kurtosis', 3)
+                            stats_dict['realized_skewness'] = amaya_moments['realized_skewness']
+                            stats_dict['realized_kurtosis'] = amaya_moments['realized_kurtosis']
+                            stats_dict['amaya_scaling_applied'] = True
+                        else:
+                            stats_dict['amaya_scaling_applied'] = False
+                        
+                        day_moments.append(stats_dict)
                         processed_count += 1
-
+                        
+                    else:
+                        failed_count += 1
+                        error_msg = f"No result returned for {trading_day}"
+                        if failed_count <= 5:  # Only log first 5 failures to avoid spam
+                            logger.debug(f"    Failed: {error_msg}")
+                        results['detailed_log'].append(f"{trading_day}: {error_msg}")
+                        
                 except Exception as e:
-                    print(f"Error processing trading day {trading_day}: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
-
-            print(f"\nSuccessfully processed {processed_count} new trading days for {ticker}")
-
-            # Only create IV surface plots if we haven't already
-            iv_surface_dir = f"{results_dir}/iv_surfaces"
-            if not os.path.exists(iv_surface_dir) or len(os.listdir(iv_surface_dir)) < 2:
-                # Step 4: Create and save IV surface plots for selected trading days
-                print(f"\nCreating IV surface plots for {ticker} with no-arbitrage IV prioritized...")
-                os.makedirs(iv_surface_dir, exist_ok=True)
-
-                # Select a few representative trading days - spread throughout the range
-                if len(valid_trading_days) >= 5:
-                    indices = np.linspace(0, len(valid_trading_days)-1, 5).astype(int)
-                    iv_plot_days = [valid_trading_days[i] for i in indices]
-                else:
-                    iv_plot_days = valid_trading_days
-
-                for trading_day in iv_plot_days:
-                    plot_iv_surface(volatility_data, trading_day, ticker, save_dir=iv_surface_dir)
+                    failed_count += 1
+                    error_msg = str(e)
+                    if failed_count <= 5:  # Only log first 5 failures to avoid spam
+                        logger.debug(f"    Failed {trading_day}: {error_msg}")
+                    results['detailed_log'].append(f"{trading_day}: {error_msg}")
+            
+            # Save results for this day length
+            if day_moments:
+                df = pd.DataFrame(day_moments)
+                df.to_csv(csv_file, index=False)
+                logger.info(f"  ✓ Saved {len(day_moments)} records to {csv_file}")
+                
+                results['trading_days_processed'] += processed_count
+                results['trading_days_failed'] += failed_count
+                
+                # Log processing summary
+                total_days = processed_count + failed_count
+                success_rate = (processed_count / total_days) * 100 if total_days > 0 else 0
+                logger.info(f"  Summary: {processed_count}/{total_days} successful ({success_rate:.1f}%)")
+                
+                # Log reasons for failures if there are many
+                if failed_count > 10:
+                    failure_sample = results['detailed_log'][-min(3, failed_count):]
+                    logger.info(f"  Sample failures: {failure_sample}")
+                
             else:
-                print(f"\nIV surface plots already exist for {ticker}, skipping recreation")
-
-            # Step 5: Create moments time series plots
-            if moments_data:
-                print(f"\nCreating moments time series plots for {ticker}...")
-
-                # Save moments data first
-                moments_df = pd.DataFrame(moments_data)
-                moments_df.to_csv(f"{results_dir}/{ticker}_moments_summary.csv", index=False)
-                print(f"Saved {len(moments_data)} moments to {results_dir}/{ticker}_moments_summary.csv")
-
-                # Create time series directory
-                os.makedirs(f"{results_dir}/time_series", exist_ok=True)
-
-                # Plot and save time series with error handling
+                logger.error(f"  No valid results for {day_length}-day expirations")
+                results['steps_failed'].append(f'process_{day_length}_day')
+                continue
+            
+            results['steps_completed'].append(f'process_{day_length}_day')
+        
+        # Step 4: Generate time series plots for all completed expiration lengths
+        logger.info(f"Step 4: Generating time series plots for {ticker}")
+        
+        for day_length in target_days:
+            csv_file = f"{expiration_dir}/{ticker}_{day_length}day_options_summary.csv"
+            if os.path.exists(csv_file):
                 try:
+                    logger.info(f"  Creating time series plots for {day_length}-day options...")
+                    
+                    # Load data
+                    df = pd.read_csv(csv_file)
+                    
+                    # Create time series directory
+                    time_series_dir = f"{expiration_dir}/{day_length}day_time_series"
+                    os.makedirs(time_series_dir, exist_ok=True)
+                    
+                    # Create plots
                     plot_skewness_kurtosis_time_series(
-                        moments_data, ticker, save_dir=f"{results_dir}/time_series")
-                    print(f"Successfully created time series plots for {ticker}")
+                        df.to_dict('records'),
+                        f"{ticker} ({day_length}-day)",
+                        save_dir=time_series_dir
+                    )
+                    
+                    # Create Amaya comparison plots if applicable
+                    if 'original_realized_skewness' in df.columns:
+                        plot_amaya_comparison(
+                            df.to_dict('records'),
+                            ticker,
+                            day_length,
+                            save_dir=time_series_dir
+                        )
+                    
+                    logger.info(f"  ✓ Created time series plots for {day_length}-day options")
+                    results['steps_completed'].append(f'plots_{day_length}_day')
+                    
                 except Exception as e:
-                    print(f"Warning: Failed to create time series plots for {ticker}: {e}")
-                    print("Continuing with analysis - plots can be generated later.")
+                    logger.error(f"  Failed to create plots for {day_length}-day: {str(e)}")
+                    results['steps_failed'].append(f'plots_{day_length}_day')
+        
+        results['success'] = True
+        logger.info(f"=== Successfully completed processing for {ticker} ===")
+        
+    except Exception as e:
+        logger.error(f"=== Failed processing for {ticker}: {str(e)} ===")
+        results['steps_failed'].append('major_error')
+        results['detailed_log'].append(f"Major error: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+    
+    return results
 
-            print(f"\nCompleted analysis for {ticker}")
-            ticker_processing_status[ticker] = "Completed"
-
+def main():
+    """
+    Streamlined main function that automatically processes all tickers for specific expiration lengths
+    with comprehensive logging and resume capability
+    """
+    # Set up logging
+    logger = setup_logging()
+    
+    # Record start time
+    start_time = datetime.now()
+    logger.info(f"Analysis started at {start_time}")
+    
+    # Update global variables with current timestamp
+    global TIMESTAMP, USERNAME
+    TIMESTAMP = "2025-05-31 19:06:43"  # Current UTC time
+    USERNAME = "testtesttest703"
+    
+    logger.info(f"Processing expiration-specific analysis for tickers: {valid_tickers}")
+    logger.info(f"Target expiration days: [6, 7, 8, 9, 10]")
+    
+    try:
+        # Step 1: Check current process state
+        logger.info("=== STEP 1: Checking Process State ===")
+        state = get_process_state()
+        
+        # Display current state summary
+        logger.info("=== Current State Summary ===")
+        for ticker in valid_tickers:
+            ticker_state = state['tickers'][ticker]
+            logger.info(f"{ticker}: {ticker_state['current_step']} "
+                       f"({ticker_state['completion_percentage']:.1f}% complete) "
+                       f"- Next: {ticker_state['next_action']}")
+            
+            if ticker_state['issues']:
+                logger.warning(f"  Issues: {', '.join(ticker_state['issues'])}")
+        
+        # Step 2: Load Treasury rates data (needed for all processing)
+        logger.info("=== Loading Treasury Rates Data ===")
+        treasury_rates = load_treasury_rates()
+        if treasury_rates is None:
+            logger.warning("Treasury rates not available, using default rates")
+        
+        # Step 3: Process tickers based on their state
+        logger.info("=== STEP 2: Processing Tickers ===")
+        
+        if state['overall_status'] == 'no_processable_tickers':
+            logger.error("No tickers can be processed due to missing data files")
+            return
+        
+        elif state['overall_status'] == 'all_complete':
+            logger.info("All tickers are fully processed! No further action needed.")
+            
+            # Still generate time series plots if any are missing
+            logger.info("Checking for missing time series plots...")
+            plots_generated = 0
+            for ticker in valid_tickers:
+                ticker_state = state['tickers'][ticker]
+                if ticker_state['data_file_exists'] and ticker_state['minute_data_available']:
+                    expiration_dir = f'/content/drive/MyDrive/{ticker}_analysis_results/expiration_specific'
+                    
+                    for day_length in [6, 7, 8, 9, 10]:
+                        csv_file = f"{expiration_dir}/{ticker}_{day_length}day_options_summary.csv"
+                        time_series_dir = f"{expiration_dir}/{day_length}day_time_series"
+                        
+                        if os.path.exists(csv_file) and not os.path.exists(f"{time_series_dir}/{ticker}_{day_length}day_skewness_time_series.png"):
+                            logger.info(f"Generating missing plots for {ticker} {day_length}-day...")
+                            try:
+                                df = pd.read_csv(csv_file)
+                                os.makedirs(time_series_dir, exist_ok=True)
+                                
+                                plot_skewness_kurtosis_time_series(
+                                    df.to_dict('records'),
+                                    f"{ticker} ({day_length}-day)",
+                                    save_dir=time_series_dir
+                                )
+                                
+                                if 'original_realized_skewness' in df.columns:
+                                    plot_amaya_comparison(
+                                        df.to_dict('records'),
+                                        ticker,
+                                        day_length,
+                                        save_dir=time_series_dir
+                                    )
+                                
+                                plots_generated += 1
+                                logger.info(f"✓ Generated plots for {ticker} {day_length}-day")
+                                
+                            except Exception as e:
+                                logger.error(f"Failed to generate plots for {ticker} {day_length}-day: {str(e)}")
+            
+            if plots_generated > 0:
+                logger.info(f"Generated {plots_generated} missing plot sets")
+            else:
+                logger.info("All plots are already complete")
+            return
+        
         else:
-            print(f"Error: Data file not found for {ticker}")
-            ticker_processing_status[ticker] = "Failed - No data file"
+            # Process tickers that need work
+            tickers_to_process = state['next_actions']
+            logger.info(f"Processing {len(tickers_to_process)} tickers: {tickers_to_process}")
+            
+            processing_results = {}
+            
+            for ticker in tickers_to_process:
+                logger.info(f"\n{'='*50}")
+                logger.info(f"PROCESSING TICKER: {ticker}")
+                logger.info(f"{'='*50}")
+                
+                # Process this ticker comprehensively
+                results = process_ticker_comprehensive(ticker, state, treasury_rates, logger)
+                processing_results[ticker] = results
+                
+                # Log results summary
+                if results['success']:
+                    logger.info(f"✓ {ticker} completed successfully")
+                    logger.info(f"  Steps completed: {len(results['steps_completed'])}")
+                    logger.info(f"  Trading days processed: {results['trading_days_processed']}")
+                    logger.info(f"  Trading days failed: {results['trading_days_failed']}")
+                    if results['trading_days_processed'] > 0:
+                        success_rate = (results['trading_days_processed'] / 
+                                      (results['trading_days_processed'] + results['trading_days_failed'])) * 100
+                        logger.info(f"  Success rate: {success_rate:.1f}%")
+                else:
+                    logger.error(f"✗ {ticker} failed")
+                    logger.error(f"  Steps failed: {results['steps_failed']}")
+                    if results['detailed_log']:
+                        logger.error(f"  First few errors: {results['detailed_log'][:3]}")
+        
+        # Step 4: Final state check and summary
+        logger.info("=== STEP 3: Final State Check ===")
+        final_state = get_process_state()
+        
+        # Create final summary
+        logger.info("=== FINAL PROCESSING SUMMARY ===")
+        total_processed = 0
+        total_failed = 0
+        
+        for ticker in valid_tickers:
+            final_ticker_state = final_state['tickers'][ticker]
+            logger.info(f"{ticker}: {final_ticker_state['current_step']} "
+                       f"({final_ticker_state['completion_percentage']:.1f}% complete)")
+            
+            if ticker in processing_results:
+                results = processing_results[ticker]
+                logger.info(f"  This session - Processed: {results['trading_days_processed']} days, "
+                           f"Failed: {results['trading_days_failed']} days")
+                total_processed += results['trading_days_processed']
+                total_failed += results['trading_days_failed']
+        
+        # Record end time
+        end_time = datetime.now()
+        runtime = end_time - start_time
+        
+        logger.info("=== ANALYSIS COMPLETE ===")
+        logger.info(f"Started: {start_time}")
+        logger.info(f"Ended: {end_time}")
+        logger.info(f"Runtime: {runtime}")
+        logger.info(f"Total trading days processed this session: {total_processed}")
+        logger.info(f"Total trading days failed this session: {total_failed}")
+        if total_processed + total_failed > 0:
+            session_success_rate = (total_processed / (total_processed + total_failed)) * 100
+            logger.info(f"Session success rate: {session_success_rate:.1f}%")
+        logger.info(f"User: {USERNAME}")
+        
+        # Check if any tickers still need work
+        if final_state['overall_status'] != 'all_complete':
+            incomplete_tickers = [t for t in valid_tickers 
+                                if final_state['tickers'][t]['completion_percentage'] < 100]
+            logger.info(f"Note: {len(incomplete_tickers)} tickers still need processing: {incomplete_tickers}")
+            logger.info("Run the script again to continue processing.")
+        else:
+            logger.info("🎉 ALL TICKERS ARE NOW FULLY PROCESSED!")
+            logger.info("All expiration-specific analysis complete with time series plots generated.")
+            
+    except Exception as e:
+        logger.error(f"Fatal error in main processing: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise
 
-    # Record end time and total runtime
-    end_time = datetime.now()
-    runtime = end_time - start_time
-    print(f"\nAnalysis complete.")
-    print(f"Started: {start_time}")
-    print(f"Ended:   {end_time}")
-    print(f"Runtime: {runtime}")
-
-    # Print status of each ticker
-    print("\nProcessing Summary:")
-    for ticker, status in ticker_processing_status.items():
-        print(f"{ticker}: {status}")
-
-    print(f"\nResults saved to drive")
-    print(f"Analysis performed by: {USERNAME}")
 if __name__ == "__main__":
-  main()
+    main()
